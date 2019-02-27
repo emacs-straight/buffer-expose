@@ -4,7 +4,7 @@
 
 ;; Author: Clemens Radermacher <clemera@posteo.net>
 ;; URL: https://github.com/clemera/buffer-expose
-;; Version: 0.1
+;; Version: 0.2
 ;; Package-Requires: ((emacs "25") (cl-lib "0.5"))
 ;; Keywords: convenience
 
@@ -78,7 +78,7 @@ Instantiate bindings of `buffer-expose-mode-map'."
 ;; * Customization
 
 (defgroup buffer-expose nil
-  "Show git info in dired."
+  "Visual buffer switching using a window grid"
   :group 'convenience
   :prefix "buffer-expose-")
 
@@ -195,7 +195,7 @@ page. See also `buffer-expose--get-rule'"
 
 (defcustom buffer-expose-key-hint
   (concat "Navigate with TAB, Shift-TAB, n, p, f, b, [, ]. "
-          "Press RET, SPC or click to choose a buffer, q to abort. "
+          "Press RET, SPC or click to choose a buffer, k to kill, q to abort. "
           "See buffer-expose-grid-map for more.")
   "Help message when overview is shown."
   :type 'string)
@@ -220,6 +220,7 @@ page. See also `buffer-expose--get-rule'"
     (define-key map (kbd "<S-iso-lefttab>") 'buffer-expose-prev-window)
     (define-key map (kbd "]") 'buffer-expose-next-page)
     (define-key map (kbd "[") 'buffer-expose-prev-page)
+    (define-key map "k" 'buffer-expose-kill-buffer)
     map)
   "Transient keymap used for the overview.")
 
@@ -420,12 +421,15 @@ Return list of windows created."
     (balance-windows)
     (nreverse ws)))
 
+(defvar-local buffer-expose--empty-buffer nil)
+
 (defun buffer-expose--create-empty-buffer (&optional name)
   "Create buffer for empty window with name NAME.
 
 NAME defaults to `buffer-expose--empty-buffer-name'."
   (with-current-buffer (generate-new-buffer
                         (or name buffer-expose--empty-buffer-name))
+    (setq-local buffer-expose--empty-buffer t)
     (setq buffer-read-only t)
     (setq mode-line-format "")
     (setq cursor-type nil)
@@ -434,9 +438,7 @@ NAME defaults to `buffer-expose--empty-buffer-name'."
 
 (defun buffer-expose-fill-grid ()
   "Fill grid windows."
-  (let ((ws buffer-expose--window-list)
-        (emptybuffer (or (get-buffer buffer-expose--empty-buffer-name)
-                         (buffer-expose--create-empty-buffer))))
+  (let ((ws buffer-expose--window-list))
     (dolist (w ws)
       (if buffer-expose--buffer-list
           (with-current-buffer (pop buffer-expose--buffer-list)
@@ -473,24 +475,23 @@ NAME defaults to `buffer-expose--empty-buffer-name'."
                 (setq header-line-format nil))
 
             (setf (window-buffer w) (current-buffer)))
-        (setf (window-buffer w) emptybuffer)))))
+        (setf (window-buffer w)
+              (buffer-expose--create-empty-buffer))))))
 
 (defun buffer-expose--empty-window-p (w)
   "Check if window W is an empty one."
-  (eq (window-buffer w)
-      (get-buffer buffer-expose--empty-buffer-name)))
+  (with-current-buffer (window-buffer w)
+    buffer-expose--empty-buffer))
 
 (defun buffer-expose--select-window (w)
   "Select window W.
 
 Prevents switching to empty windows. Does not change the order of
 `buffer-list'. After selection the grid view is updated."
-  (if (buffer-expose--empty-window-p w)
-      (message "Can not switch to empty window.")
-    ;; dont put buffer at front when selecting windows
-    (select-window w :no-record)
-    ;; redisplay
-    (buffer-expose--update-display)))
+  ;; dont put buffer at front when selecting windows
+  (select-window w :no-record)
+  ;; redisplay
+  (buffer-expose--update-display))
 
 
 (defun buffer-expose-show-buffers (blist &optional max regexes filter)
@@ -527,8 +528,6 @@ which should be included."
           (set-transient-map
            map
            (lambda ()
-             (when (not (lookup-key map (this-command-keys-vector)))
-               (message buffer-expose-key-hint))
              (not (lookup-key buffer-expose-exit-map (this-command-keys-vector))))))))
 
 (defun buffer-expose--init-ui ()
@@ -615,7 +614,7 @@ MAX is the maximum of windows to display per page."
 
 ;; * Reset state
 
-(defun buffer-expose-reset-buffers ()
+(defun buffer-expose--reset-buffers ()
   "Reset buffers."
   ;; reset the seleted one
   ;; remove any previous ones...
@@ -638,7 +637,7 @@ MAX is the maximum of windows to display per page."
                 (buffer-expose--bdata-read-only data)))))))
 
 
-(defun buffer-expose-reset-vars-internal ()
+(defun buffer-expose--reset-vars-internal ()
   "Reset internal state tracking vars."
   (setq buffer-expose--next-stack nil
         buffer-expose--prev-stack nil
@@ -649,7 +648,7 @@ MAX is the maximum of windows to display per page."
         buffer-expose--reactivate-modes nil
         buffer-expose--reset-variables nil))
 
-(defun buffer-expose-reset-modes ()
+(defun buffer-expose--reset-modes ()
   "Reset modes."
   (setq fringe-mode (pop buffer-expose-fringe))
   (modify-frame-parameters
@@ -660,7 +659,7 @@ MAX is the maximum of windows to display per page."
   (dolist (mode buffer-expose--redisable-modes)
     (funcall mode -1)))
 
-(defun buffer-expose-reset-vars ()
+(defun buffer-expose--reset-vars ()
   "Reset buffer vars."
   (dolist (var buffer-expose--reset-variables)
     (set (car var) (cdr var))))
@@ -684,6 +683,11 @@ Window config is a list of (window . buffer) cells."
     (setf (window-buffer (car wb))
           (cdr wb))))
 
+(defun buffer-expose--reset-empty-buffers ()
+  (dolist (buf (buffer-list))
+    (when (buffer-local-value 'buffer-expose--empty-buffer buf)
+      (kill-buffer buf))))
+
 (defun buffer-expose-reset ()
   "Exit overview, restore and reset state."
   (interactive)
@@ -692,10 +696,11 @@ Window config is a list of (window . buffer) cells."
   (when buffer-expose--cancel-overriding-map-function
     (funcall buffer-expose--cancel-overriding-map-function))
   (set-window-configuration buffer-expose--initial-window-config)
-  (buffer-expose-reset-buffers)
-  (buffer-expose-reset-modes)
-  (buffer-expose-reset-vars)
-  (buffer-expose-reset-vars-internal))
+  (buffer-expose--reset-buffers)
+  (buffer-expose--reset-empty-buffers)
+  (buffer-expose--reset-modes)
+  (buffer-expose--reset-vars)
+  (buffer-expose--reset-vars-internal))
 
 ;; * Entry commands
 
@@ -1022,16 +1027,14 @@ F defaults to the currently selected window."
   "Kill currently selected buffer."
   (interactive)
   (let ((buf (window-buffer))
-        (w (get-buffer-window)))
-    (buffer-expose--select-window
-     (or (window-in-direction 'right)
-         (window-in-direction 'below)
-         (window-in-direction 'left)
-         (window-in-direction 'above)
-         (selected-window)))
-    (kill-buffer buf)
-    (setf (window-buffer w)
-          (get-buffer-create buffer-expose--empty-buffer-name))))
+        (w (get-buffer-window))
+        (nw (buffer-expose--other-window)))
+    (buffer-expose--select-window nw)
+    (let ((overriding-terminal-local-map nil))
+      (if (kill-buffer buf)
+          (setf (window-buffer w)
+                (buffer-expose--create-empty-buffer))
+        (buffer-expose--select-window w)))))
 
 (defun buffer-expose-choose ()
   "Choose buffer and exit overview."
