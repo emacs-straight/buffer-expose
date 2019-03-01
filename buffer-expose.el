@@ -4,7 +4,7 @@
 
 ;; Author: Clemens Radermacher <clemera@posteo.net>
 ;; URL: https://github.com/clemera/buffer-expose
-;; Version: 0.2
+;; Version: 0.3
 ;; Package-Requires: ((emacs "25") (cl-lib "0.5"))
 ;; Keywords: convenience
 
@@ -1027,14 +1027,17 @@ F defaults to the currently selected window."
   "Kill currently selected buffer."
   (interactive)
   (let ((buf (window-buffer))
-        (w (get-buffer-window))
-        (nw (buffer-expose--other-window)))
-    (buffer-expose--select-window nw)
+        (w (get-buffer-window)))
     (let ((overriding-terminal-local-map nil))
-      (if (kill-buffer buf)
-          (setf (window-buffer w)
-                (buffer-expose--create-empty-buffer))
-        (buffer-expose--select-window w)))))
+      (when (kill-buffer buf)
+        (setq buffer-expose--selected-cookie nil)
+        (setf (window-buffer w)
+              (buffer-expose--create-empty-buffer))
+        (buffer-expose--select-window
+         (or (window-in-direction 'right)
+             (window-in-direction 'below)
+             (window-in-direction 'left)
+             (selected-window)))))))
 
 (defun buffer-expose-choose ()
   "Choose buffer and exit overview."
