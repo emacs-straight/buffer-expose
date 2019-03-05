@@ -4,7 +4,7 @@
 
 ;; Author: Clemens Radermacher <clemera@posteo.net>
 ;; URL: https://github.com/clemera/buffer-expose
-;; Version: 0.3
+;; Version: 0.4
 ;; Package-Requires: ((emacs "25") (cl-lib "0.5"))
 ;; Keywords: convenience
 
@@ -101,9 +101,13 @@ Should return the string to display.")
   '((t :inherit font-lock-warning-face))
   "Face for avy chars in modelines.")
 
-(defcustom buffer-expose-aw-keys '(?a ?s ?d ?f ?g ?h ?j ?k ?l ?\;)
+(defcustom buffer-expose-aw-keys '(?a ?s ?d ?f ?g ?h ?j ?k ?l ?e ?i ?w ?o)
   "Keys for selecting windows with avy."
   :type '(repeat character))
+
+(defcustom buffer-expose-auto-init-aw nil
+  "Whether to start with ace-window activated."
+  :type 'boolean)
 
 (defun buffer-expose-choose-default-action (buf)
   "Restore inital window config and switch to choosen buffer BUF."
@@ -463,7 +467,8 @@ NAME defaults to `buffer-expose--empty-buffer-name'."
                                        (buffer-expose--ace-p
                                         (:propertize
                                          (:eval (window-parameter (selected-window) 'ace-window-path))
-                                         face buffer-expose-ace-char-face))
+                                         face buffer-expose-ace-char-face)
+                                        " ")
                                        " "
                                        (:propertize (:eval (funcall buffer-expose-mode-line-title-func))
                                                     face buffer-expose-mode-line-face))))
@@ -541,14 +546,17 @@ which should be included."
   (buffer-expose--init-map)
 
   ;; some buffers (dired and maybe more) need this to display correctly
-  (dolist (w (window-list nil 'nomini))
-    (with-current-buffer (window-buffer w)
-      (redisplay)))
 
-    ;; setup new window-switch behaviour
+
+  ;; setup new window-switch behaviour
   (buffer-expose--select-window (frame-first-window))
   ;; initil message how to use
-  (message buffer-expose-key-hint))
+  (message buffer-expose-key-hint)
+  (when buffer-expose-auto-init-aw
+    (buffer-expose-ace-window))
+  (dolist (w (window-list nil 'nomini))
+    (with-current-buffer (window-buffer w)
+      (redisplay))))
 
 (defvar buffer-expose-fringe nil)
 
@@ -968,6 +976,21 @@ F defaults to the currently selected window."
   (funcall #'aw-switch-to-window w)
   (buffer-expose-choose))
 
+(defun buffer-expose-ace-handler (char)
+  "Execute buffer-expose action for CHAR."
+  (cond ((memq char '(27 ?\C-g))
+         ;; exit silently
+         (throw 'done 'exit))
+        ((mouse-event-p char)
+         (signal 'user-error (list "Mouse event not handled" char)))
+        (t
+         (if (or (lookup-key buffer-expose-exit-map (vector char))
+                 (lookup-key buffer-expose-grid-map (vector char)))
+             (progn (call-interactively (key-binding (vector char)))
+                    (throw 'done 'exit))
+           (message "No such candidate: %s, hit `C-g' to quit."
+                    (if (characterp char) (string char) char))))))
+
 (defun buffer-expose-ace-window ()
   "Choose a window with ‘ace-window’."
   (interactive)
@@ -978,7 +1001,7 @@ F defaults to the currently selected window."
            (aw-background nil)
            (aw-ignored-buffers nil)
            (avy-dispatch-alist nil)
-           (aw-dispatch-function #'avy-handler-default)
+           (aw-dispatch-function #'buffer-expose-ace-handler)
            (foreground (face-attribute 'aw-leading-char-face :foreground)))
       (cl-letf (((symbol-function #'aw--lead-overlay)
                  #'ignore))
@@ -1003,12 +1026,16 @@ F defaults to the currently selected window."
   (if buffer-expose--prev-stack
       (progn (buffer-expose--restore-windows
               (pop buffer-expose--prev-stack))
-             (buffer-expose--select-window (frame-first-window)))
+             (buffer-expose--select-window (frame-first-window))
+             (when buffer-expose-auto-init-aw
+               (buffer-expose-ace-window)))
     (if buffer-expose--buffer-list
         (progn
           (buffer-expose-fill-grid)
           ;; update the new window for highlighting
-          (buffer-expose--select-window (frame-first-window)))
+          (buffer-expose--select-window (frame-first-window))
+          (when buffer-expose-auto-init-aw
+            (buffer-expose-ace-window)))
       (error "No next view available"))))
 
 (defun buffer-expose-prev-page ()
@@ -1020,7 +1047,9 @@ F defaults to the currently selected window."
               buffer-expose--prev-stack)
         (buffer-expose--restore-windows (pop buffer-expose--next-stack))
         ;; for consistency with next-page make sure it behaves the same
-        (buffer-expose--select-window (frame-first-window)))
+        (buffer-expose--select-window (frame-first-window))
+        (when buffer-expose-auto-init-aw
+          (buffer-expose-ace-window)))
     (error "No previous view available")))
 
 (defun buffer-expose-kill-buffer ()
