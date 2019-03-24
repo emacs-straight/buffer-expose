@@ -4,7 +4,7 @@
 
 ;; Author: Clemens Radermacher <clemera@posteo.net>
 ;; URL: https://github.com/clemera/buffer-expose
-;; Version: 0.4
+;; Version: 0.4.1
 ;; Package-Requires: ((emacs "25") (cl-lib "0.5"))
 ;; Keywords: convenience
 
@@ -101,7 +101,7 @@ Should return the string to display.")
   '((t :inherit font-lock-warning-face))
   "Face for avy chars in modelines.")
 
-(defcustom buffer-expose-aw-keys '(?a ?s ?d ?f ?g ?h ?j ?k ?l ?e ?i ?w ?o)
+(defcustom buffer-expose-aw-keys '(?a ?d ?g ?h ?j ?l ?e ?i ?w ?o ?c ?m)
   "Keys for selecting windows with avy."
   :type '(repeat character))
 
@@ -159,19 +159,36 @@ A value if 0 means no limit."
     (18 . (6 . 3))
     (16 . (4 . 4))
     (12 . (4 . 3))
-    (8 . (4 . 2))
-    (6 . (3 . 2))
-    (4 . (2 . 2))
-    (2 . (2 . 1))
-    (1 . (1 . 1)))
+    (11 . (4 . 3))
+    (10 . (4 . 3))
+    (9  . (4 . 3))
+    (8  . (4 . 2))
+    (7  . (4 . 2))
+    (6  . (3 . 2))
+    (5  . (3 . 2))
+    (4  . (2 . 2))
+    (3  . (2 . 2))
+    (2  . (2 . 1))
+    (1  . (1 . 1)))
   "Rules for the amount of windows and how to display them.
 
 The `car' contains the number of buffers to display and is mapped
 to a display rule. Each display rule is a cell (columns . rows)
 which defines the number of colums and the number of rows per
-page. See also `buffer-expose--get-rule'"
+page. If you always want the same grid layout set
+`buffer-expose-default-rule'. See also `buffer-expose--get-rule'
+for the algorithm for choosing the layout rule."
   :type '(alist :key-type integer
                 :value-type (cons interger interger)))
+
+(defcustom buffer-expose-default-rule nil
+  "Default rule for grid layout.
+
+The rule format is a cell of (columns . rows) which defines the
+number of colums and the number of rows per page. If set the grid
+will always use this layout regardless how many buffers are
+available for display."
+  :type '(cons integer integer))
 
 (defcustom buffer-expose-hide-modelines nil
   "Whether to hide modelines in the overview."
@@ -220,6 +237,8 @@ page. See also `buffer-expose--get-rule'"
     (define-key map (kbd "<") 'buffer-expose-first-window)
     (define-key map (kbd ">") 'buffer-expose-last-window)
     (define-key map (kbd "SPC") 'buffer-expose-ace-window)
+    (define-key map (kbd ",") 'buffer-expose-ace-window)
+    (define-key map (kbd "TAB") 'buffer-expose-next-window)
     (define-key map (kbd "<tab>") 'buffer-expose-next-window)
     (define-key map (kbd "<S-iso-lefttab>") 'buffer-expose-prev-window)
     (define-key map (kbd "]") 'buffer-expose-next-page)
@@ -366,18 +385,21 @@ The rule is choosen based on NUM number of buffers and MAX amount
 of windows per page (see `buffer-expose-grid-alist'). If MAX is
 nil it defaults to `buffer-expose-max-num-windows'. If there are
 less buffers available than windows the first rule which
-corresponds to the number of buffers is choosen."
-  (let ((nums (mapcar 'car buffer-expose-grid-alist)))
-    (while (and nums
-                ;; fewer buffers than rule
-                (or (< num (car nums))
-                    ;; qrule exceeds limit
-                    (> (car nums) (or max
-                                      buffer-expose-max-num-windows))))
-      (pop nums))
-    (when nums
-      (cdr (assq (car nums)
-                 buffer-expose-grid-alist)))))
+corresponds to the number of buffers in
+`buffer-expose-grid-alist' is choosen. This can be overidden by
+`buffer-expose-default-rule'."
+  (or buffer-expose-default-rule
+      (let ((nums (mapcar 'car buffer-expose-grid-alist)))
+        (while (and nums
+                    ;; fewer buffers than rule
+                    (or (< num (car nums))
+                        ;; qrule exceeds limit
+                        (> (car nums) (or max
+                                          buffer-expose-max-num-windows))))
+          (pop nums))
+        (when nums
+          (cdr (assq (car nums)
+                     buffer-expose-grid-alist))))))
 
 (defun buffer-expose--get-major-modes ()
   "Get a list of available major modes."
@@ -978,18 +1000,21 @@ F defaults to the currently selected window."
 
 (defun buffer-expose-ace-handler (char)
   "Execute buffer-expose action for CHAR."
-  (cond ((memq char '(27 ?\C-g))
+  (cond ((memq char '(27 ?\C-g ?,))
          ;; exit silently
          (throw 'done 'exit))
         ((mouse-event-p char)
          (signal 'user-error (list "Mouse event not handled" char)))
         (t
-         (if (or (lookup-key buffer-expose-exit-map (vector char))
-                 (lookup-key buffer-expose-grid-map (vector char)))
-             (progn (call-interactively (key-binding (vector char)))
-                    (throw 'done 'exit))
-           (message "No such candidate: %s, hit `C-g' to quit."
-                    (if (characterp char) (string char) char))))))
+         (require 'edmacro)
+         (let* ((key (kbd (edmacro-format-keys (vector char))))
+                (cmd (or (lookup-key buffer-expose-exit-map key)
+                         (lookup-key buffer-expose-grid-map key))))
+           (if cmd
+               (progn (call-interactively cmd)
+                      (throw 'done 'exit))
+             (message "No such candidate: %s, hit `C-g' to quit."
+                      (if (characterp char) (string char) char)))))))
 
 (defun buffer-expose-ace-window ()
   "Choose a window with ‘ace-window’."
