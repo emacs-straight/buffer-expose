@@ -4,7 +4,7 @@
 
 ;; Author: Clemens Radermacher <clemera@posteo.net>
 ;; URL: https://github.com/clemera/buffer-expose
-;; Version: 0.4.1
+;; Version: 0.4.2
 ;; Package-Requires: ((emacs "25") (cl-lib "0.5"))
 ;; Keywords: convenience
 
@@ -33,26 +33,20 @@
 
 ;; silence byte compiler
 (declare-function face-remap-remove-relative "ext:face-remap")
-;; optional deps
-(defvar exwm-input-line-mode-passthrough nil)
-(defvar aw-dispatch-function 'aw-dispatch-default)
-(defvar avy-dispatch-alist
-  '((?x . avy-action-kill-move)
-    (?X . avy-action-kill-stay)
-    (?t . avy-action-teleport)
-    (?m . avy-action-mark)
-    (?n . avy-action-copy)
-    (?y . avy-action-yank)
-    (?i . avy-action-ispell)
-    (?z . avy-action-zap-to-char)))
-(defvar aw-ignored-buffers '("*Calc Trail*" "*LV*"))
-(defvar aw-background t)
-(defvar aw-keys '(?1 ?2 ?3 ?4 ?5 ?6 ?7 ?8 ?9))
+(declare-function projectile-project-root "ext:projectile")
+(declare-function projectile-project-buffers "ext:projectile")
 (declare-function aw-switch-to-window, "ext:ace-window")
 (declare-function aw--lead-overlay "ext:ace-window")
 (declare-function aw-select "ext:ace-window")
 (declare-function aw-update "ext:ace-window")
 (declare-function avy-handler-default "ext:avy")
+;; optional deps
+(defvar exwm-input-line-mode-passthrough)
+(defvar aw-dispatch-function)
+(defvar avy-dispatch-alist)
+(defvar aw-ignored-buffers)
+(defvar aw-background)
+(defvar aw-keys)
 
 ;; * Minor mode
 
@@ -416,6 +410,14 @@ corresponds to the number of buffers in
       (when (eq mode (buffer-local-value 'major-mode buf))
         (push buf bufs)))))
 
+(defun buffer-expose--get-project-buffers ()
+  "Get all buffers from `projectile-project-buffers'."
+  (if (not (require 'projectile nil t))
+      (user-error "Projectile not found")
+    (if (not (projectile-project-root))
+	(user-error "Not in project")
+      (projectile-project-buffers))))
+
 ;; * Grid
 
 (defun buffer-expose--other-window ()
@@ -592,16 +594,18 @@ which should be included."
     (push (cons var (symbol-value var))
           buffer-expose--reset-variables))
 
-  (let ((p (frame-parameters)))
-    (setq buffer-expose-fringe (list fringe-mode
-                              (assq 'left-fringe p)
-                              (assq 'right-fringe p))))
+  (when (boundp 'fringe-mode)
+    (let ((p (frame-parameters)))
+      (setq buffer-expose-fringe (list fringe-mode
+                                       (assq 'left-fringe p)
+                                       (assq 'right-fringe p)))))
 
   ;; minor modes
   (dolist (mode '(scroll-bar-mode window-divider-mode))
-    (if (symbol-value mode)
-        (push mode buffer-expose--reactivate-modes)
-      (push mode buffer-expose--redisable-modes)))
+    (when (boundp mode)
+      (if (symbol-value mode)
+          (push mode buffer-expose--reactivate-modes)
+        (push mode buffer-expose--redisable-modes))))
 
   (setq mouse-autoselect-window nil
         mouse-1-click-follows-link nil)
@@ -609,8 +613,10 @@ which should be included."
   (when buffer-expose-hide-cursor-in-other-windows
     (setq cursor-in-non-selected-windows nil))
 
-  (fringe-mode -1)
-  (scroll-bar-mode -1)
+  (when (fboundp 'fringe-mode)
+    (fringe-mode -1))
+  (when (fboundp 'scroll-bar-mode)
+    (scroll-bar-mode -1))
   (let ((window-divider-default-places t))
     (window-divider-mode 1)))
 
@@ -680,9 +686,10 @@ MAX is the maximum of windows to display per page."
 
 (defun buffer-expose--reset-modes ()
   "Reset modes."
-  (setq fringe-mode (pop buffer-expose-fringe))
-  (modify-frame-parameters
-   nil  buffer-expose-fringe)
+  (when (boundp 'fringe-mode)
+    (setq fringe-mode (pop buffer-expose-fringe))
+    (modify-frame-parameters
+     nil  buffer-expose-fringe))
 
   (dolist (mode buffer-expose--reactivate-modes)
     (funcall mode 1))
@@ -802,6 +809,37 @@ show per page, which defaults to `buffer-expose-max-num-windows'."
    (lambda (buf)
      (eq (buffer-local-value 'major-mode buf)
          'dired-mode))))
+
+
+(defun buffer-expose-project (&optional max)
+  "Expose buffers of `projectile-project-buffers'.
+
+If MAX is given it determines the maximum number of windows to
+show per page, which defaults to `buffer-expose-max-num-windows'."
+  (interactive "P")
+  (buffer-expose-show-buffers
+   (buffer-expose--get-project-buffers) max))
+
+
+(defun buffer-expose-project-stars (&optional max)
+  "Expose *special* buffers of `projectile-project-buffers'.
+
+If MAX is given it determines the maximum number of windows to
+show per page, which defaults to `buffer-expose-max-num-windows'."
+  (interactive "P")
+  (buffer-expose-show-buffers
+   (buffer-expose--get-project-buffers) max '("\\`[^*]")))
+
+
+(defun buffer-expose-project-no-stars (&optional max)
+  "Expose buffers of `projectile-project-buffers' omitting *special* ones.
+
+If MAX is given it determines the maximum number of windows to
+show per page, which defaults to `buffer-expose-max-num-windows'."
+  (interactive "P")
+    (buffer-expose-show-buffers
+     (buffer-expose--get-project-buffers) max '("\\`\\*")))
+
 
 ;; * Grid navigation
 
